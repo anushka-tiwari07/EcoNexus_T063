@@ -1,2 +1,7 @@
-# sem3_PBL_T063
-A C++17 prototype that generates company-specific compliance recommendations, optimizes carbon-management strategies, simulates carbon-credit trading, and records trade statistics while providing complexity and performance analysis.
+Problem Statement: Organizations facing carbon-compliance deficits must decide whether to purchase Carbon Credit Certificates (CCCs), invest in emission-reduction measures such as captive solar generation and EV fleets, or combine these strategies. These decisions are often handled through separate tools, making it difficult to evaluate market prices, seller reliability, fees, budget constraints, roof availability, and investment returns together. This project proposes an integrated decision-support and carbon-market simulation platform to address this gap.
+
+Methodology: The system will ingest carbon-market reference rates and compliance/seller data, normalize prices using a Pricing Oracle, and evaluate available carbon-credit deals based on effective cost, fees, quantity, and reliability. A Company Compliance Model will calculate the carbon deficit and Dignity Index, while a SolarROI module will estimate solar sizing, feasibility, and payback. A Dynamic Programming-based knapsack solver will determine an optimized combination of solar investment, EV fleet investment, and spot-market purchases. The platform will also simulate a carbon exchange using a dual-heap order book with a max-heap for bids, min-heap for asks, price-time priority, partial fills, and order cancellation.
+
+Key Technologies: C++17, STL priority_queue, unordered_map, sorting algorithms, heap,Dynamic Programming, C++ threads, and memory-pool techniques.
+
+Proposed Outcome: A working C++17 prototype that generates company-specific compliance recommendations, optimizes carbon-management strategies, simulates carbon-credit trading, and records trade statistics while providing complexity and performance analysis.
