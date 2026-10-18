@@ -1,9 +1,0 @@
-{
-  "name": "eco-nexus-frontend",
-  "private": true,
-  "scripts": {
-    "build:css": "tailwindcss -c tailwind.config.js -i src/input.css -o css/app.css --minify",
-    "watch:css": "tailwindcss -c tailwind.config.js -i src/input.css -o css/app.css --watch"
-  },
-  "devDependencies": { "tailwindcss": "3.4.17", "chart.js": "4.4.1" }
-}
