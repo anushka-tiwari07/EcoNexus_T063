@@ -1,0 +1,837 @@
+openapi: 3.0.3
+info:
+  title: Carbon Compliance Platform API
+  version: 0.3.0
+  description: |
+    Phase 3 checkpoint: health, authentication, organisations, memberships, facilities, audit history.
+    Every operation listed here is verified against the running server by the test suite
+    (backend/tests/test_openapi.cpp and test_org_api.cpp). All trading features are SIMULATED (later phases).
+
+    **Authentication**: a server-side session in an HttpOnly cookie (`carbon_session`, or `__Host-carbon_session`
+    in production). **CSRF**: every POST/PATCH/PUT/DELETE on an authenticated route must send the `X-CSRF-Token`
+    header with the `csrf_token` returned by login/register/`GET /auth/me`.
+
+    **Tenancy**: a caller with no standing in an organisation receives 404 (existence is not revealed); a member
+    lacking the permission receives 403. Platform administrators manage organisations/memberships but have no
+    access to company facility data.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: health
+  - name: auth
+  - name: organizations
+  - name: members
+  - name: facilities
+  - name: audit
+security:
+  - sessionCookie: []
+paths:
+  /api/v1/health/live:
+    get:
+      summary: "Liveness (touches no dependencies)"
+      operationId: healthLive
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: "Alive"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Live" }
+  /api/v1/health/ready:
+    get:
+      summary: "Readiness: database reachable and all migrations applied"
+      operationId: healthReady
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: "Ready"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ready" }
+        "503":
+          description: "A check failed"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ready" }
+  /api/v1/auth/register:
+    post:
+      summary: "Self-register: creates a user and a new organisation (user becomes company_admin) and logs in"
+      operationId: register
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: "Created; sets session cookie"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionInfo" }
+        "403":
+          description: "Self-registration disabled"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: "Rate limited (Retry-After header)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/login:
+    post:
+      summary: "Log in; sets the session cookie"
+      operationId: login
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: "Logged in"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionInfo" }
+        "401":
+          description: "Invalid email or password (identical for unknown user, wrong password, locked or inactive account)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: "Rate limited (Retry-After header)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/logout:
+    post:
+      summary: "Revoke the current session"
+      operationId: logout
+      tags: [auth]
+      responses:
+        "204":
+          description: "Logged out; cookie cleared"
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/me:
+    get:
+      summary: "Current user, memberships and CSRF token"
+      operationId: me
+      tags: [auth]
+      responses:
+        "200":
+          description: "Session info"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionInfo" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/password-reset/request:
+    post:
+      summary: "Request a password reset (always 202; does not reveal whether the account exists)"
+      operationId: passwordResetRequest
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailRequest" }
+      responses:
+        "202":
+          description: "Accepted"
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: "Rate limited"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/password-reset/confirm:
+    post:
+      summary: "Set a new password with a one-time token; revokes all sessions"
+      operationId: passwordResetConfirm
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResetConfirmRequest" }
+      responses:
+        "204":
+          description: "Password changed"
+        "400":
+          description: "Invalid or expired token"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: "Rate limited"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/organizations:
+    get:
+      summary: "List organisations the caller belongs to (platform admins: all)"
+      operationId: listOrganizations
+      tags: [organizations]
+      parameters:
+        - { $ref: "#/components/parameters/limit" }
+        - { $ref: "#/components/parameters/offset" }
+        - { $ref: "#/components/parameters/order" }
+        - { name: sort, in: query, schema: { type: string, enum: [name, sector, created_at] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+      responses:
+        "200":
+          description: "Page of organisations"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationPage" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      summary: "Create an organisation (platform administrators only)"
+      operationId: createOrganization
+      tags: [organizations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrganizationCreate" }
+      responses:
+        "201":
+          description: "Created"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/organizations/{orgId}:
+    get:
+      summary: "Get an organisation"
+      operationId: getOrganization
+      tags: [organizations]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+      responses:
+        "200":
+          description: "Organisation"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    patch:
+      summary: "Update organisation details (company_admin)"
+      operationId: updateOrganization
+      tags: [organizations]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrganizationPatch" }
+      responses:
+        "200":
+          description: "Updated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/organizations/{orgId}/members:
+    get:
+      summary: "List members (company_admin, platform admin)"
+      operationId: listMembers
+      tags: [members]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/limit" }
+        - { $ref: "#/components/parameters/offset" }
+        - { $ref: "#/components/parameters/order" }
+        - { name: sort, in: query, schema: { type: string, enum: [email, role, created_at] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+      responses:
+        "200":
+          description: "Page of members"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberPage" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      summary: "Add an existing user to the organisation by email (company_admin, platform admin)"
+      operationId: addMember
+      tags: [members]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemberCreate" }
+      responses:
+        "201":
+          description: "Added"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/organizations/{orgId}/members/{membershipId}:
+    patch:
+      summary: "Change a member role; an organisation always keeps one company_admin"
+      operationId: changeMemberRole
+      tags: [members]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/membershipId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemberPatch" }
+      responses:
+        "200":
+          description: "Updated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      summary: "Remove a member; the last company_admin cannot be removed"
+      operationId: removeMember
+      tags: [members]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/membershipId" }
+      responses:
+        "204":
+          description: "Removed"
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/organizations/{orgId}/facilities:
+    get:
+      summary: "List facilities"
+      operationId: listFacilities
+      tags: [facilities]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/limit" }
+        - { $ref: "#/components/parameters/offset" }
+        - { $ref: "#/components/parameters/order" }
+        - { name: sort, in: query, schema: { type: string, enum: [name, sector, created_at] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: is_active, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: "Page of facilities"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FacilityPage" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      summary: "Create a facility (company_admin, consultant)"
+      operationId: createFacility
+      tags: [facilities]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FacilityCreate" }
+      responses:
+        "201":
+          description: "Created (Location header set)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Facility" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/organizations/{orgId}/facilities/{facilityId}:
+    get:
+      summary: "Get a facility"
+      operationId: getFacility
+      tags: [facilities]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/facilityId" }
+      responses:
+        "200":
+          description: "Facility"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Facility" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    patch:
+      summary: "Update or deactivate a facility (company_admin, consultant)"
+      operationId: updateFacility
+      tags: [facilities]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/facilityId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FacilityPatch" }
+      responses:
+        "200":
+          description: "Updated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Facility" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "Conflict"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/organizations/{orgId}/audit-events:
+    get:
+      summary: "Audit history of the organisation, newest first (company_admin, consultant, reviewer, platform admin)"
+      operationId: listAuditEvents
+      tags: [audit]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/limit" }
+        - { $ref: "#/components/parameters/offset" }
+        - { $ref: "#/components/parameters/order" }
+        - { name: sort, in: query, schema: { type: string, enum: [occurred_at, action] } }
+        - { name: action, in: query, schema: { type: string, maxLength: 64 }, description: substring filter }
+      responses:
+        "200":
+          description: "Page of audit events"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditPage" }
+        "401":
+          description: "Not authenticated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "Forbidden (role lacks the permission, or CSRF token missing/invalid)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "No standing in the organisation / not found"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Validation failed (field details in error.details)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: carbon_session
+      description: "HttpOnly session cookie (named __Host-carbon_session in production). Unsafe methods also need X-CSRF-Token."
+  parameters:
+    orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+    membershipId: { name: membershipId, in: path, required: true, schema: { type: string, format: uuid } }
+    facilityId: { name: facilityId, in: path, required: true, schema: { type: string, format: uuid } }
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+    offset: { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+    order: { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: not_found }
+            message: { type: string }
+            request_id: { type: string }
+            details: {}
+    Live:
+      type: object
+      required: [status, version, uptime_seconds]
+      properties: { status: { type: string, enum: [ok] }, version: { type: string }, uptime_seconds: { type: integer } }
+    Ready:
+      type: object
+      required: [status, version, checks]
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        version: { type: string }
+        checks: { type: object, additionalProperties: { type: object, required: [status], properties: { status: { type: string, enum: [ok, fail] } } } }
+    PageInfo:
+      type: object
+      properties: { limit: { type: integer }, offset: { type: integer }, total: { type: integer } }
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, display_name, organization_name, sector]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12, maxLength: 128 }
+        display_name: { type: string, maxLength: 80 }
+        organization_name: { type: string, minLength: 2, maxLength: 120 }
+        sector: { type: string, minLength: 2, maxLength: 60 }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties: { email: { type: string }, password: { type: string } }
+    EmailRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties: { email: { type: string } }
+    ResetConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [token, new_password]
+      properties: { token: { type: string }, new_password: { type: string, minLength: 12, maxLength: 128 } }
+    SessionInfo:
+      type: object
+      properties:
+        user: { type: object, properties: { id: { type: string, format: uuid }, email: { type: string }, display_name: { type: string }, is_platform_admin: { type: boolean } } }
+        memberships: { type: array, items: { type: object, properties: { organization_id: { type: string, format: uuid }, role: { $ref: "#/components/schemas/Role" } } } }
+        csrf_token: { type: string }
+    Role: { type: string, enum: [company_admin, company_operator, consultant, reviewer] }
+    Organization:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        legal_name: { type: string, nullable: true }
+        sector: { type: string }
+        state: { type: string, nullable: true }
+        gstin: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        role: { allOf: [{ $ref: "#/components/schemas/Role" }], nullable: true, description: Caller role (list endpoint only; null for platform admins) }
+    OrganizationCreate:
+      type: object
+      additionalProperties: false
+      required: [name, sector]
+      properties: { name: { type: string }, sector: { type: string }, legal_name: { type: string }, state: { type: string }, gstin: { type: string, pattern: "^[0-9A-Z]{15}$" } }
+    OrganizationPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties: { name: { type: string }, sector: { type: string }, legal_name: { type: string }, state: { type: string }, gstin: { type: string, pattern: "^[0-9A-Z]{15}$" } }
+    OrganizationPage:
+      type: object
+      properties: { data: { type: array, items: { $ref: "#/components/schemas/Organization" } }, page: { $ref: "#/components/schemas/PageInfo" } }
+    Member:
+      type: object
+      properties: { id: { type: string, format: uuid }, user_id: { type: string, format: uuid }, email: { type: string }, display_name: { type: string }, role: { $ref: "#/components/schemas/Role" }, created_at: { type: string, format: date-time } }
+    MemberCreate:
+      type: object
+      additionalProperties: false
+      required: [email, role]
+      properties: { email: { type: string }, role: { $ref: "#/components/schemas/Role" } }
+    MemberPatch:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties: { role: { $ref: "#/components/schemas/Role" } }
+    MemberPage:
+      type: object
+      properties: { data: { type: array, items: { $ref: "#/components/schemas/Member" } }, page: { $ref: "#/components/schemas/PageInfo" } }
+    Facility:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        name: { type: string }
+        sector: { type: string }
+        state: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        production_unit: { type: string }
+        boundary_notes: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    FacilityCreate:
+      type: object
+      additionalProperties: false
+      required: [name, sector, production_unit]
+      properties: { name: { type: string, maxLength: 120 }, sector: { type: string }, production_unit: { type: string, maxLength: 30 }, state: { type: string }, address: { type: string, maxLength: 300 }, boundary_notes: { type: string, maxLength: 2000 } }
+    FacilityPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties: { name: { type: string }, sector: { type: string }, production_unit: { type: string }, state: { type: string }, address: { type: string }, boundary_notes: { type: string }, is_active: { type: boolean } }
+    FacilityPage:
+      type: object
+      properties: { data: { type: array, items: { $ref: "#/components/schemas/Facility" } }, page: { $ref: "#/components/schemas/PageInfo" } }
+    AuditEvent:
+      type: object
+      properties: { id: { type: string, format: uuid }, occurred_at: { type: string, format: date-time }, actor_user_id: { type: string, nullable: true }, action: { type: string }, entity_type: { type: string, nullable: true }, entity_id: { type: string, nullable: true }, request_id: { type: string, nullable: true }, details: { type: object } }
+    AuditPage:
+      type: object
+      properties: { data: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }, page: { $ref: "#/components/schemas/PageInfo" } }
