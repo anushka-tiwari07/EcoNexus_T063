@@ -5,3 +5,6 @@ Methodology: The system will ingest carbon-market reference rates and compliance
 Key Technologies: C++17, STL priority_queue, unordered_map, sorting algorithms, heap,Dynamic Programming, C++ threads, and memory-pool techniques.
 
 Proposed Outcome: A working C++17 prototype that generates company-specific compliance recommendations, optimizes carbon-management strategies, simulates carbon-credit trading, and records trade statistics while providing complexity and performance analysis.
+Phase 3 completed.
+Front-end made.
+Implemented: C DSA library, PostgreSQL schema + migrator, Crow server with health endpoints, basic accounts (register/login/logout/me on PostgreSQL), and the static ECO-NEXUS frontend served by the same server.
